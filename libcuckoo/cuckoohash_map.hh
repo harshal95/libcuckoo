@@ -22,6 +22,7 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+#include <deque>
 
 #include "cuckoohash_config.hh"
 #include "cuckoohash_util.hh"
@@ -75,6 +76,8 @@ public:
   using const_pointer = typename buckets_t::const_pointer;
   class locked_table;
 
+  std::deque<std::atomic_uint16_t> counters;
+
   /**@}*/
 
   /** @name Table Parameters */
@@ -86,6 +89,21 @@ public:
   static constexpr uint16_t slot_per_bucket() { return SLOT_PER_BUCKET; }
 
   /**@}*/
+
+  void init_counters(){
+      counters.resize(bucket_count());
+      std::cout << "Bucket count : " << bucket_count()  << "\t" << "Counters size : " << counters.size() << std::endl;
+  }
+
+  void print_counters(){
+      for(int i=0; i<counters.size(); i++){
+          std::cout << " value : " << counters[i] << std::endl;
+      }
+  }
+
+  void increment_counter(const size_type index){
+      counters[index]++;
+  }
 
   /** @name Constructors, Destructors, and Assignment */
   /**@{*/
@@ -111,6 +129,7 @@ public:
         max_num_worker_threads_(0) {
     all_locks_.emplace_back(std::min(bucket_count(), size_type(kMaxNumLocks)),
                             spinlock(), get_allocator());
+      init_counters();
   }
 
   /**
@@ -168,6 +187,7 @@ public:
     } else {
       add_locks_from_other(other);
     }
+    init_counters();
   }
 
   /**
@@ -201,6 +221,7 @@ public:
     } else {
       add_locks_from_other(other);
     }
+    init_counters();
   }
 
   /**
@@ -487,11 +508,22 @@ public:
    */
   template <typename K, typename F> bool find_fn(const K &key, F fn) const {
     const hash_value hv = hashed_key(key);
-    const auto b = snapshot_and_lock_two<normal_mode>(hv);
-    const table_position pos = cuckoo_find(key, hv.partial, b.i1, b.i2);
+      const size_type i1 = index_hash(hashpower(), hv.hash);
+      const size_type i2 = alt_index(hashpower(), hv.partial, i1);
+   //commenting out locking
+   // const auto b = snapshot_and_lock_two<normal_mode>(hv);
+
+   //Check version
+   uint16_t old_version = counters[i1].load(std::memory_order_relaxed);
+   if(old_version % 2 == 1){
+       //abort this operation
+       return false;
+   }
+    const table_position pos = cuckoo_find(key, hv.partial, i1, i2);
     if (pos.status == ok) {
       fn(buckets_[pos.index].mapped(pos.slot));
-      return true;
+      uint16_t new_version = counters[i1].load(std::memory_order_relaxed);
+      return new_version == old_version;
     } else {
       return false;
     }
@@ -618,10 +650,26 @@ public:
    */
   template <typename K> mapped_type find(const K &key) const {
     const hash_value hv = hashed_key(key);
-    const auto b = snapshot_and_lock_two<normal_mode>(hv);
-    const table_position pos = cuckoo_find(key, hv.partial, b.i1, b.i2);
+      const size_type i1 = index_hash(hashpower(), hv.hash);
+      const size_type i2 = alt_index(hashpower(), hv.partial, i1);
+    //const auto b = snapshot_and_lock_two<normal_mode>(hv);
+
+      //Check version
+      uint16_t old_version = counters[i1].load(std::memory_order_relaxed);
+      if(old_version % 2 == 1){
+          //abort this operation
+          throw std::out_of_range("key not found in table");
+      }
+
+    const table_position pos = cuckoo_find(key, hv.partial, i1, i2);
     if (pos.status == ok) {
-      return buckets_[pos.index].mapped(pos.slot);
+       mapped_type value =  buckets_[pos.index].mapped(pos.slot);
+        uint16_t new_version = counters[i1].load(std::memory_order_relaxed);
+        if( new_version == old_version){
+            return value;
+        } else{
+            throw std::out_of_range("key not found in table");
+        }
     } else {
       throw std::out_of_range("key not found in table");
     }
@@ -1297,8 +1345,14 @@ private:
   template <typename K, typename... Args>
   void add_to_bucket(const size_type bucket_ind, const size_type slot,
                      const partial_t partial, K &&key, Args &&... val) {
+
+      hash_value hv = hashed_key(key);
+      //find the primary index of the key we are trying to move
+      size_type index =  index_hash(hashpower(), hv.hash);
+      increment_counter(index);
     buckets_.setKV(bucket_ind, slot, partial, std::forward<K>(key),
                    std::forward<Args>(val)...);
+    increment_counter(index);
     ++get_current_locks()[lock_ind(bucket_ind)].elem_counter();
   }
 
@@ -1517,6 +1571,7 @@ private:
         twob = lock_two(hp, from.bucket, to.bucket, TABLE_MODE());
       }
 
+
       bucket &fb = buckets_[from.bucket];
       bucket &tb = buckets_[to.bucket];
 
@@ -1533,9 +1588,15 @@ private:
         return false;
       }
 
+      hash_value hv = hashed_key(fb.key(from.slot));
+      //find the primary index of the key we are trying to move
+      size_type index =  index_hash(hashpower(), hv.hash);
+      increment_counter(index);
       buckets_.setKV(to.bucket, ts, fb.partial(fs), fb.movable_key(fs),
                      std::move(fb.mapped(fs)));
       buckets_.eraseKV(from.bucket, fs);
+      increment_counter(index);
+
       if (depth == 1) {
         // Hold onto the locks contained in twob
         b = std::move(twob);
@@ -1795,10 +1856,13 @@ private:
         dst_bucket_ind = old_bucket_ind;
         dst_bucket_slot = old_bucket_slot;
       }
+
+      //increment_counter(old_bucket_ind);
       new_buckets.setKV(dst_bucket_ind, dst_bucket_slot++,
                         old_bucket.partial(old_bucket_slot),
                         old_bucket.movable_key(old_bucket_slot),
                         std::move(old_bucket.mapped(old_bucket_slot)));
+      //increment_counter(old_bucket_ind);
     }
   }
 
@@ -1981,7 +2045,14 @@ private:
   // Removes an item from a bucket, decrementing the associated counter as
   // well.
   void del_from_bucket(const size_type bucket_ind, const size_type slot) {
-    buckets_.eraseKV(bucket_ind, slot);
+
+      hash_value hv = hashed_key(buckets_[bucket_ind].key(slot));
+      //find the primary index of the key we are trying to delete
+      size_type index =  index_hash(hashpower(), hv.hash);
+
+      increment_counter(index);
+      buckets_.eraseKV(bucket_ind, slot);
+      increment_counter(index);
     --get_current_locks()[lock_ind(bucket_ind)].elem_counter();
   }
 
@@ -1994,8 +2065,7 @@ private:
     num_remaining_lazy_rehash_locks(0);
     for (spinlock &lock : get_current_locks()) {
       lock.elem_counter() = 0;
-      lock.is_migrated() = true;
-    }
+      lock.is_migrated() = true;}
   }
 
   // Rehashing functions

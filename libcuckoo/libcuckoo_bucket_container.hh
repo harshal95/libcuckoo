@@ -302,12 +302,14 @@ private:
   // `true` here refers to whether or not we should move
   void move_or_copy(size_type dst_ind, size_type dst_slot, bucket &src,
                     size_type src_slot, std::true_type) {
+      //TODO: increment_counter here?
     setKV(dst_ind, dst_slot, src.partial(src_slot), src.movable_key(src_slot),
           std::move(src.mapped(src_slot)));
   }
 
   void move_or_copy(size_type dst_ind, size_type dst_slot, bucket &src,
                     size_type src_slot, std::false_type) {
+      //TODO: increment_counter here?
     setKV(dst_ind, dst_slot, src.partial(src_slot), src.key(src_slot),
           src.mapped(src_slot));
   }

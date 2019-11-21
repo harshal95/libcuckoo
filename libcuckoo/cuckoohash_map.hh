@@ -28,6 +28,7 @@
 #include "cuckoohash_util.hh"
 #include "libcuckoo_bucket_container.hh"
 
+
 /**
  * A concurrent hash table
  *
@@ -53,6 +54,9 @@ private:
   using buckets_t =
       libcuckoo_bucket_container<Key, T, Allocator, partial_t, SLOT_PER_BUCKET>;
 
+  cuckoohash_map* new_hashmap;
+
+
 public:
   /** @name Type Declarations */
   /**@{*/
@@ -74,6 +78,7 @@ public:
   using const_reference = typename buckets_t::const_reference;
   using pointer = typename buckets_t::pointer;
   using const_pointer = typename buckets_t::const_pointer;
+
   class locked_table;
 
   std::deque<std::atomic_uint16_t> counters;
@@ -107,7 +112,6 @@ public:
 
   /** @name Constructors, Destructors, and Assignment */
   /**@{*/
-
   /**
    * Creates a new cuckohash_map instance
    *
@@ -239,6 +243,8 @@ public:
                  const Allocator &alloc = Allocator())
       : cuckoohash_map(init.begin(), init.end(), n, hf, equal, alloc) {}
 
+
+
   /**
    * Exchanges the contents of the map with those of @p other
    *
@@ -313,6 +319,7 @@ public:
     }
     return *this;
   }
+
 
   /**@}*/
 
@@ -485,6 +492,7 @@ public:
     return max_num_worker_threads_.load(std::memory_order_acquire);
   }
 
+
   /**@}*/
 
   /** @name Table Operations
@@ -513,6 +521,9 @@ public:
        const hash_value hv = hashed_key(key);
        const size_type i1 = index_hash(hashpower(), hv.hash);
        const size_type i2 = alt_index(hashpower(), hv.partial, i1);
+       int b1_status = buckets_[i1].status;
+       int b2_status = buckets_[i2].status;
+       //std::cout << buckets_[i1].get_migration_status() << std::endl;
        //commenting out locking
        // const auto b = snapshot_and_lock_two<normal_mode>(hv);
 
@@ -1229,6 +1240,7 @@ private:
   template <typename K>
   int try_read_from_bucket(const bucket &b, const partial_t partial,
                            const K &key) const {
+
     // Silence a warning from MSVC about partial being unused if is_simple.
     (void)partial;
     for (int i = 0; i < static_cast<int>(slot_per_bucket()); ++i) {
@@ -1955,10 +1967,13 @@ private:
     // Creates a new hash table with hashpower new_hp and adds all the elements
     // from buckets_ and old_buckets_. Allow this map to spawn extra threads if
     // it needs to resize during the resize.
+
+
     cuckoohash_map new_map(hashsize(new_hp) * slot_per_bucket(),
                            hash_function(), key_eq(), get_allocator());
+    new_hashmap = &new_map;
     new_map.max_num_worker_threads(max_num_worker_threads());
-
+    
     parallel_exec(
         0, hashsize(hp),
         [this, &new_map]
@@ -1977,7 +1992,8 @@ private:
             eptr = std::current_exception();
           }
         });
-
+    
+    std::cout << "New hashmap's bucket count is " << new_hashmap-> bucket_count() << std::endl;
     // Finish rehashing any data in new_map.
     new_map.rehash_with_workers();
 

@@ -19,4 +19,5 @@ int main() {
       std::cout << i << "  NOT FOUND" << std::endl;
     }
   }
+  Table.reserve(20);
 }

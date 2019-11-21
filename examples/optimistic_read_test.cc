@@ -51,7 +51,8 @@ void do_inserts(cuckoohash_map<int, std::string> &Table) {
         // If the number is already in the table, it will increment
         // its count by one. Otherwise it will insert a new entry in
         // the table with count one.
-        Table.upsert(num, updatefn, 1);
+        //Table.upsert(num, updatefn, 1);
+        Table.insert(num, "hello");
     }
 }
 

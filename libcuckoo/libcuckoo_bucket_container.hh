@@ -83,6 +83,13 @@ public:
     bool occupied(size_type ind) const { return occupied_[ind]; }
     bool &occupied(size_type ind) { return occupied_[ind]; }
 
+      enum migration_status {
+          unmigrated,
+          migrating,
+          migrated,
+      };
+      migration_status status;
+
   private:
     friend class libcuckoo_bucket_container;
 
@@ -103,6 +110,7 @@ public:
         values_;
     std::array<partial_t, SLOT_PER_BUCKET> partials_;
     std::array<bool, SLOT_PER_BUCKET> occupied_;
+
   };
 
   libcuckoo_bucket_container(size_type hp, const allocator_type &allocator)

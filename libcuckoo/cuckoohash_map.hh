@@ -506,27 +506,35 @@ public:
    * @param fn the functor to invoke if the element is found
    * @return true if the key was found and functor invoked, false otherwise
    */
-  template <typename K, typename F> bool find_fn(const K &key, F fn) const {
-    const hash_value hv = hashed_key(key);
-      const size_type i1 = index_hash(hashpower(), hv.hash);
-      const size_type i2 = alt_index(hashpower(), hv.partial, i1);
-   //commenting out locking
-   // const auto b = snapshot_and_lock_two<normal_mode>(hv);
+  template <typename K, typename F> int find_fn(const K &key, F fn) const {
+   int i = 0;
+   int retry_count = 5;
+   while(i++ < retry_count) {
+       const hash_value hv = hashed_key(key);
+       const size_type i1 = index_hash(hashpower(), hv.hash);
+       const size_type i2 = alt_index(hashpower(), hv.partial, i1);
+       //commenting out locking
+       // const auto b = snapshot_and_lock_two<normal_mode>(hv);
 
-   //Check version
-   uint16_t old_version = counters[i1].load(std::memory_order_relaxed);
-   if(old_version % 2 == 1){
-       //abort this operation
-       return false;
+       //Check version
+       uint16_t old_version = counters[i1].load(std::memory_order_relaxed);
+       if (old_version % 2 == 1) {
+           //Interleaving operation: so retry!!
+           continue;
+       }
+       const table_position pos = cuckoo_find(key, hv.partial, i1, i2);
+       if (pos.status == ok) {
+           fn(buckets_[pos.index].mapped(pos.slot));
+           uint16_t new_version = counters[i1].load(std::memory_order_relaxed);
+           if(new_version == old_version) {
+               return 1;
+           }
+           continue;
+       } else {
+           return -1;
+       }
    }
-    const table_position pos = cuckoo_find(key, hv.partial, i1, i2);
-    if (pos.status == ok) {
-      fn(buckets_[pos.index].mapped(pos.slot));
-      uint16_t new_version = counters[i1].load(std::memory_order_relaxed);
-      return new_version == old_version;
-    } else {
-      return false;
-    }
+   return 0;
   }
 
   /**
@@ -637,7 +645,11 @@ public:
    * mapped_type must be @c CopyAssignable.
    */
   template <typename K> bool find(const K &key, mapped_type &val) const {
-    return find_fn(key, [&val](const mapped_type &v) mutable { val = v; });
+    int res = find_fn(key, [&val](const mapped_type &v) mutable { val = v; });
+      if(res == 0) {
+          std::cout <<"Read failed for " << key << " because of contention... try again!!" << std::endl;
+      }
+    return (res == 1);
   }
 
   /** Searches the table for @p key, and returns the associated value it
@@ -680,7 +692,11 @@ public:
    * find_fn with a functor that does nothing.
    */
   template <typename K> bool contains(const K &key) const {
-    return find_fn(key, [](const mapped_type &) {});
+    int res = find_fn(key, [](const mapped_type &) {});
+    if(res == 0) {
+        std::cout <<"Read failed for" << key << "because of contention... try again!!" << std::endl;
+    }
+    return (res == 1);
   }
 
   /**

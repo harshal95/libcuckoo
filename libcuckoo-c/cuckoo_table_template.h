@@ -78,7 +78,7 @@ size_t CUCKOO(_capacity)(const CUCKOO_TABLE_NAME *tbl);
 double CUCKOO(_load_factor)(const CUCKOO_TABLE_NAME *tbl);
 
 // find_fn
-bool CUCKOO(_find_fn)(const CUCKOO_TABLE_NAME *tbl, const CUCKOO_KEY_ALIAS *key,
+int CUCKOO(_find_fn)(const CUCKOO_TABLE_NAME *tbl, const CUCKOO_KEY_ALIAS *key,
                       void (*fn)(const CUCKOO_MAPPED_ALIAS *));
 
 // update_fn

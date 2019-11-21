@@ -16,4 +16,10 @@ target_link_libraries(blob_blob_table libcuckoo)
 add_executable(c_hash c_hash.c)
 target_link_libraries(c_hash int_str_table blob_blob_table)
 
+add_executable(optimistic_read_test optimistic_read_test.cc)
+target_link_libraries(optimistic_read_test libcuckoo)
+
+add_executable(optimistic_read_single_writer_test optimistic_read_single_writer_test.cc)
+target_link_libraries(optimistic_read_single_writer_test libcuckoo)
+
 set_property(TARGET c_hash PROPERTY C_STANDARD 99)

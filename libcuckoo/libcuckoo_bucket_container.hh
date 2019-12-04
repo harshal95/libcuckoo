@@ -12,6 +12,11 @@
 
 #include "cuckoohash_util.hh"
 
+enum migration_status {
+    unmigrated,
+    migrating,
+    migrated,
+};
 /**
  * libcuckoo_bucket_container manages storage of key-value pairs for the table.
  * It stores the items inline in uninitialized memory, and keeps track of which
@@ -44,6 +49,7 @@ public:
   using const_reference = const value_type &;
   using pointer = typename traits_::pointer;
   using const_pointer = typename traits_::const_pointer;
+
 
   /*
    * The bucket type holds SLOT_PER_BUCKET key-value pairs, along with their
@@ -83,11 +89,6 @@ public:
     bool occupied(size_type ind) const { return occupied_[ind]; }
     bool &occupied(size_type ind) { return occupied_[ind]; }
 
-      enum migration_status {
-          unmigrated,
-          migrating,
-          migrated,
-      };
       migration_status status;
 
   private:

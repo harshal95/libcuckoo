@@ -22,4 +22,7 @@ target_link_libraries(optimistic_read_test libcuckoo)
 add_executable(optimistic_read_single_writer_test optimistic_read_single_writer_test.cc)
 target_link_libraries(optimistic_read_single_writer_test libcuckoo)
 
+add_executable(expand_table expand_table.cc)
+target_link_libraries(expand_table libcuckoo)
+
 set_property(TARGET c_hash PROPERTY C_STANDARD 99)

@@ -23,6 +23,7 @@
 #include <utility>
 #include <vector>
 #include <deque>
+#include <future>
 
 #include "cuckoohash_config.hh"
 #include "cuckoohash_util.hh"
@@ -54,7 +55,8 @@ private:
   using buckets_t =
       libcuckoo_bucket_container<Key, T, Allocator, partial_t, SLOT_PER_BUCKET>;
 
-  cuckoohash_map* new_hashmap;
+  cuckoohash_map* new_hashmap = NULL;
+  std::atomic_bool isMigrating{false};
 
 
 public:
@@ -1279,6 +1281,11 @@ private:
       case failure_key_duplicated:
         return pos;
       case failure_table_full:
+//        if(isMigrating == true) {
+//            b = snapshot_and_lock_two<TABLE_MODE>(hv);
+//            break;
+//        }
+//        isMigrating = true;
         // Expand the table and try again, re-grabbing the locks
         cuckoo_fast_double<TABLE_MODE, automatic_resize>(hp);
         b = snapshot_and_lock_two<TABLE_MODE>(hv);
@@ -1766,11 +1773,19 @@ private:
   // provides a strong exception guarantee.
   template <typename TABLE_MODE, typename AUTO_RESIZE>
   cuckoo_status cuckoo_fast_double(size_type current_hp) {
+    std::thread myThread(&cuckoohash_map::cuckoo_expand_simple<TABLE_MODE, AUTO_RESIZE>, this, current_hp + 1);
+    myThread.join();
+    return ok;
+//    return cuckoo_expand_simple<TABLE_MODE, AUTO_RESIZE>(current_hp + 1);
     if (!is_data_nothrow_move_constructible()) {
+      std::cout << "FastDouble: Calling expand simple" << std::endl;
       LIBCUCKOO_DBG("%s", "cannot run cuckoo_fast_double because key-value"
                           " pair is not nothrow move constructible");
+
       return cuckoo_expand_simple<TABLE_MODE, AUTO_RESIZE>(current_hp + 1);
     }
+    std::cout << "FastDouble: Skipping expand simple" << std::endl;
+    //exit(0);
     const size_type new_hp = current_hp + 1;
     auto all_locks_manager = lock_all(TABLE_MODE());
     cuckoo_status st = check_resize_validity<AUTO_RESIZE>(current_hp, new_hp);
@@ -1954,6 +1969,7 @@ private:
   // maximum hashpower, and we have an actual limit.
   template <typename TABLE_MODE, typename AUTO_RESIZE>
   cuckoo_status cuckoo_expand_simple(size_type new_hp) {
+    /* TODO: Remove locking of table */
     auto all_locks_manager = lock_all(TABLE_MODE());
     const size_type hp = hashpower();
     cuckoo_status st = check_resize_validity<AUTO_RESIZE>(hp, new_hp);
@@ -1973,26 +1989,60 @@ private:
                            hash_function(), key_eq(), get_allocator());
     new_hashmap = &new_map;
     new_map.max_num_worker_threads(max_num_worker_threads());
-    
-    parallel_exec(
-        0, hashsize(hp),
-        [this, &new_map]
-        (size_type i, size_type end, std::exception_ptr &eptr) {
-          try {
-            for (; i < end; ++i) {
-              auto &bucket = buckets_[i];
-              for (size_type j = 0; j < slot_per_bucket(); ++j) {
-                if (bucket.occupied(j)) {
-                  new_map.insert(bucket.movable_key(j),
-                                 std::move(bucket.mapped(j)));
+    int total_old_buckets = hashsize(hp);
+    std::cout << "Total bucket count in old hashmap: " << total_old_buckets << std::endl;
+    int region_size = 8;
+
+    int cur_b = 0;
+    while(1) {
+
+        int start = cur_b;
+        int end = std::min(cur_b + region_size, total_old_buckets);
+        std::cout << "Starting migration between [" << start <<", " << end <<")" << std::endl;
+
+        std::exception_ptr eptr;
+        //Perform migration for region between [start, end)
+        try {
+            for (int i = start; i < end; ++i) {
+                auto &bucket = buckets_[i];
+                buckets_[i].status = migrating;
+                for (size_type j = 0; j < slot_per_bucket(); ++j) {
+                    if (bucket.occupied(j)) {
+                        new_map.insert(bucket.movable_key(j),
+                                       std::move(bucket.mapped(j)));
+                    }
                 }
-              }
+                buckets_[i].status = migrated;
             }
-          } catch (...) {
+        } catch (...) {
             eptr = std::current_exception();
-          }
-        });
-    
+        }
+        cur_b = end;
+        if(cur_b == total_old_buckets)
+            break;
+    }
+//TODO: currently replacing logic with incremental migration
+//    parallel_exec(
+//        0, hashsize(hp),
+//        [this, &new_map]
+//        (size_type i, size_type end, std::exception_ptr &eptr) {
+//          try {
+//            for (; i < end; ++i) {
+//              auto &bucket = buckets_[i];
+//              for (size_type j = 0; j < slot_per_bucket(); ++j) {
+//                if (bucket.occupied(j)) {
+//                  new_map.insert(bucket.movable_key(j),
+//                                 std::move(bucket.mapped(j)));
+//                }
+//              }
+//            }
+//          } catch (...) {
+//            eptr = std::current_exception();
+//          }
+//        });
+    auto buck = new_hashmap->buckets_[0];
+
+    std::cout <<"New buck's status " <<  buck.status << std::endl;
     std::cout << "New hashmap's bucket count is " << new_hashmap-> bucket_count() << std::endl;
     // Finish rehashing any data in new_map.
     new_map.rehash_with_workers();

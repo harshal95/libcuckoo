@@ -84,6 +84,11 @@ public:
   class locked_table;
 
   std::deque<std::atomic_uint16_t> counters;
+    enum return_code {
+        find_fail = -1,
+        retry_fail = 0,
+        find_success = 1,
+    };
 
   /**@}*/
 
@@ -523,9 +528,15 @@ public:
        const hash_value hv = hashed_key(key);
        const size_type i1 = index_hash(hashpower(), hv.hash);
        const size_type i2 = alt_index(hashpower(), hv.partial, i1);
-       int b1_status = buckets_[i1].status;
-       int b2_status = buckets_[i2].status;
-       //std::cout << buckets_[i1].get_migration_status() << std::endl;
+       if(buckets_[i1].status == migrated && buckets_[i2].status == migrated) {
+            return new_hashmap->find_fn(key, fn);
+       }else if(buckets_[i1].status == migrated || buckets_[i2].status == migrated){
+           int new_table_search = new_hashmap->find_fn(key, fn);
+           if(new_table_search == find_success){
+               return new_table_search;
+           }
+       }
+
        //commenting out locking
        // const auto b = snapshot_and_lock_two<normal_mode>(hv);
 
@@ -540,14 +551,14 @@ public:
            fn(buckets_[pos.index].mapped(pos.slot));
            uint16_t new_version = counters[i1].load(std::memory_order_relaxed);
            if(new_version == old_version) {
-               return 1;
+               return find_success;
            }
            continue;
        } else {
-           return -1;
+           return find_fail;
        }
    }
-   return 0;
+   return retry_fail;
   }
 
   /**
@@ -587,6 +598,16 @@ public:
    */
   template <typename K, typename F> bool erase_fn(const K &key, F fn) {
     const hash_value hv = hashed_key(key);
+    const size_type i1 = index_hash(hashpower(), hv.hash);
+    const size_type i2 = alt_index(hashpower(), hv.partial, i1);
+    if(buckets_[i1].status == migrated && buckets_[i2].status == migrated){
+        return new_hashmap->erase(key);
+    }else if(buckets_[i1].status == migrated || buckets_[i2].status == migrated){
+        bool result = new_hashmap->erase(key);
+        if(result){
+            return result;
+        }
+    }
     const auto b = snapshot_and_lock_two<normal_mode>(hv);
     const table_position pos = cuckoo_find(key, hv.partial, b.i1, b.i2);
     if (pos.status == ok) {
@@ -622,18 +643,35 @@ public:
    */
   template <typename K, typename F, typename... Args>
   bool uprase_fn(K &&key, F fn, Args &&... val) {
-    hash_value hv = hashed_key(key);
-    auto b = snapshot_and_lock_two<normal_mode>(hv);
-    table_position pos = cuckoo_insert_loop<normal_mode>(hv, b, key);
-    if (pos.status == ok) {
-      add_to_bucket(pos.index, pos.slot, hv.partial, std::forward<K>(key),
-                    std::forward<Args>(val)...);
-    } else {
-      if (fn(buckets_[pos.index].mapped(pos.slot))) {
-        del_from_bucket(pos.index, pos.slot);
+      int retryCount = 0;
+      while(retryCount++ < 5){
+          hash_value hv = hashed_key(key);
+          const size_type i1 = index_hash(hashpower(), hv.hash);
+          const size_type i2 = alt_index(hashpower(), hv.partial, i1);
+          if(buckets_[i1].status == migrated && buckets_[i2].status == migrated){
+              std::cout << "Calling insert of new hash map " << std::endl;
+              return new_hashmap->insert(std::forward<K>(key), std::forward<Args>(val)...);
+          }else if(buckets_[i1].status == migrated || buckets_[i2].status == migrated){
+              std::cout <<  "One bucket migrated and other isn't " << std::endl;
+              return false;
+          }
+          auto b = snapshot_and_lock_two<normal_mode>(hv);
+
+          table_position pos = cuckoo_insert_loop<normal_mode>(hv, b, key);
+          if (pos.status == ok) {
+              add_to_bucket(pos.index, pos.slot, hv.partial, std::forward<K>(key),
+                            std::forward<Args>(val)...);
+          } else if(pos.status == failure_table_full){
+              continue;
+          }else {
+              if (fn(buckets_[pos.index].mapped(pos.slot))) {
+                  del_from_bucket(pos.index, pos.slot);
+              }
+          }
+          return pos.status == ok;
       }
-    }
-    return pos.status == ok;
+      std::cout << "Exhausted retry attempts for key " << key << std::endl;
+      return false;
   }
 
   /**
@@ -1281,11 +1319,9 @@ private:
       case failure_key_duplicated:
         return pos;
       case failure_table_full:
-//        if(isMigrating == true) {
-//            b = snapshot_and_lock_two<TABLE_MODE>(hv);
-//            break;
-//        }
-//        isMigrating = true;
+        if(isMigrating == true) {
+            return pos;
+        }
         // Expand the table and try again, re-grabbing the locks
         cuckoo_fast_double<TABLE_MODE, automatic_resize>(hp);
         b = snapshot_and_lock_two<TABLE_MODE>(hv);
@@ -1774,7 +1810,7 @@ private:
   template <typename TABLE_MODE, typename AUTO_RESIZE>
   cuckoo_status cuckoo_fast_double(size_type current_hp) {
     std::thread myThread(&cuckoohash_map::cuckoo_expand_simple<TABLE_MODE, AUTO_RESIZE>, this, current_hp + 1);
-    myThread.join();
+    myThread.detach();
     return ok;
 //    return cuckoo_expand_simple<TABLE_MODE, AUTO_RESIZE>(current_hp + 1);
     if (!is_data_nothrow_move_constructible()) {
@@ -1969,8 +2005,11 @@ private:
   // maximum hashpower, and we have an actual limit.
   template <typename TABLE_MODE, typename AUTO_RESIZE>
   cuckoo_status cuckoo_expand_simple(size_type new_hp) {
+      //Set the migrating flag to block further migrations
+      isMigrating = true;
+
     /* TODO: Remove locking of table */
-    auto all_locks_manager = lock_all(TABLE_MODE());
+    //auto all_locks_manager = lock_all(TABLE_MODE());
     const size_type hp = hashpower();
     cuckoo_status st = check_resize_validity<AUTO_RESIZE>(hp, new_hp);
     if (st != ok) {
@@ -1991,8 +2030,7 @@ private:
     new_map.max_num_worker_threads(max_num_worker_threads());
     int total_old_buckets = hashsize(hp);
     std::cout << "Total bucket count in old hashmap: " << total_old_buckets << std::endl;
-    int region_size = 8;
-
+    int region_size = 1 << 5;
     int cur_b = 0;
     while(1) {
 
@@ -2051,8 +2089,11 @@ private:
     // have all the locks, so nobody else should be reading from the buckets
     // array. Then the old buckets will be deleted when new_map is deleted.
     maybe_resize_locks(new_map.bucket_count());
+    //Lock the table for a brief period to wait for current operations to complete and prevent new operations.
+    auto all_locks_manager = lock_all(TABLE_MODE());
     buckets_.swap(new_map.buckets_);
-    
+    //Unset the flag
+    isMigrating = false;
     return ok;
   }
 

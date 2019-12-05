@@ -13,10 +13,12 @@ int main() {
     cuckoohash_map<int, std::string> Table;
     int c = 0;
     while(1) {
-        Table.insert(c, "hello");
+        bool result = Table.insert(c, "hello");
         c++;
         std::cout << c << std::endl;
-        if(c == 262145)
+        if(c == 264145) {//262145
+            std::cout << "result : " << result << std::endl;
             break;
+        }
     }
 }

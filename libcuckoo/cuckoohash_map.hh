@@ -57,7 +57,8 @@ private:
 
   cuckoohash_map* new_hashmap = NULL;
   std::atomic_bool isMigrating{false};
-
+  std::atomic_uint64_t failedCountOnNewMap{0};
+  std::atomic_uint64_t succeededCountOnNewMap{0};
 
 public:
   /** @name Type Declarations */
@@ -113,7 +114,15 @@ public:
       }
   }
 
-  void increment_counter(const size_type index){
+    const std::atomic_uint64_t &getFailedCountOnNewMap() const {
+        return failedCountOnNewMap;
+    }
+
+    const std::atomic_uint64_t &getSucceededCountOnNewMap() const {
+        return succeededCountOnNewMap;
+    }
+
+    void increment_counter(const size_type index){
       counters[index]++;
   }
 
@@ -524,6 +533,7 @@ public:
   template <typename K, typename F> int find_fn(const K &key, F fn) const {
    int i = 0;
    int retry_count = 5;
+   //std::cout << "Called read" << std::endl;
    while(i++ < retry_count) {
        const hash_value hv = hashed_key(key);
        const size_type i1 = index_hash(hashpower(), hv.hash);
@@ -644,16 +654,19 @@ public:
   template <typename K, typename F, typename... Args>
   bool uprase_fn(K &&key, F fn, Args &&... val) {
       int retryCount = 0;
-      while(retryCount++ < 5){
+      while(retryCount++ < 10){
           hash_value hv = hashed_key(key);
           const size_type i1 = index_hash(hashpower(), hv.hash);
           const size_type i2 = alt_index(hashpower(), hv.partial, i1);
           if(buckets_[i1].status == migrated && buckets_[i2].status == migrated){
-              std::cout << "Calling insert of new hash map " << std::endl;
+              //std::cout << "Calling insert of new hash map " << getSucceededCountOnNewMap() <<  std::endl;
+              succeededCountOnNewMap++;
               return new_hashmap->insert(std::forward<K>(key), std::forward<Args>(val)...);
           }else if(buckets_[i1].status == migrated || buckets_[i2].status == migrated){
-              std::cout <<  "One bucket migrated and other isn't " << std::endl;
-              return false;
+              //std::cout <<  "One bucket: " << i1 << " migrated and other: " << i2<< " isn't" << std::endl;
+              failedCountOnNewMap++;
+              continue;
+              //return false;
           }
           auto b = snapshot_and_lock_two<normal_mode>(hv);
 
@@ -670,7 +683,7 @@ public:
           }
           return pos.status == ok;
       }
-      std::cout << "Exhausted retry attempts for key " << key << std::endl;
+      //std::cout << "Exhausted retry attempts for key " << key << std::endl;
       return false;
   }
 
@@ -2005,6 +2018,7 @@ private:
   // maximum hashpower, and we have an actual limit.
   template <typename TABLE_MODE, typename AUTO_RESIZE>
   cuckoo_status cuckoo_expand_simple(size_type new_hp) {
+      std::cout << "Calling expansion" << std::endl;
       //Set the migrating flag to block further migrations
       isMigrating = true;
 
@@ -2030,28 +2044,52 @@ private:
     new_map.max_num_worker_threads(max_num_worker_threads());
     int total_old_buckets = hashsize(hp);
     std::cout << "Total bucket count in old hashmap: " << total_old_buckets << std::endl;
+    //Value set upon experimentation
     int region_size = 1 << 5;
     int cur_b = 0;
+    std::vector<std::thread> threads;
     while(1) {
 
         int start = cur_b;
         int end = std::min(cur_b + region_size, total_old_buckets);
-        std::cout << "Starting migration between [" << start <<", " << end <<")" << std::endl;
+        //std::cout << "Starting migration between [" << start <<", " << end <<")" << std::endl;
 
         std::exception_ptr eptr;
         //Perform migration for region between [start, end)
         try {
-            for (int i = start; i < end; ++i) {
-                auto &bucket = buckets_[i];
-                buckets_[i].status = migrating;
-                for (size_type j = 0; j < slot_per_bucket(); ++j) {
-                    if (bucket.occupied(j)) {
-                        new_map.insert(bucket.movable_key(j),
-                                       std::move(bucket.mapped(j)));
-                    }
-                }
-                buckets_[i].status = migrated;
-            }
+//            for (int i = start; i < end; ++i) {
+//                auto &bucket = buckets_[i];
+//                buckets_[i].status = migrating;
+//                for (size_type j = 0; j < slot_per_bucket(); ++j) {
+//                    if (bucket.occupied(j)) {
+//                        new_map.insert(bucket.movable_key(j),
+//                                       std::move(bucket.mapped(j)));
+//                    }
+//                }
+//                buckets_[i].status = migrated;
+//            }
+            //TODO: currently replacing logic with incremental migration
+            parallel_exec(
+                    start, end,
+                    [this, &new_map]
+                            (size_type start, size_type end, std::exception_ptr &eptr) {
+                        try {
+                            for (int i = start; i < end; ++i) {
+                                auto &bucket = buckets_[i];
+                                buckets_[i].status = migrating;
+                                for (size_type j = 0; j < slot_per_bucket(); ++j) {
+                                    if (bucket.occupied(j)) {
+                                        new_map.insert(bucket.movable_key(j),
+                                                       std::move(bucket.mapped(j)));
+                                    }
+                                }
+                                buckets_[i].status = migrated;
+                            }
+                        } catch (...) {
+                            eptr = std::current_exception();
+                        }
+                    });
+
         } catch (...) {
             eptr = std::current_exception();
         }
@@ -2059,25 +2097,7 @@ private:
         if(cur_b == total_old_buckets)
             break;
     }
-//TODO: currently replacing logic with incremental migration
-//    parallel_exec(
-//        0, hashsize(hp),
-//        [this, &new_map]
-//        (size_type i, size_type end, std::exception_ptr &eptr) {
-//          try {
-//            for (; i < end; ++i) {
-//              auto &bucket = buckets_[i];
-//              for (size_type j = 0; j < slot_per_bucket(); ++j) {
-//                if (bucket.occupied(j)) {
-//                  new_map.insert(bucket.movable_key(j),
-//                                 std::move(bucket.mapped(j)));
-//                }
-//              }
-//            }
-//          } catch (...) {
-//            eptr = std::current_exception();
-//          }
-//        });
+
     auto buck = new_hashmap->buckets_[0];
 
     std::cout <<"New buck's status " <<  buck.status << std::endl;
@@ -2127,7 +2147,9 @@ private:
   template <typename F>
   void parallel_exec(size_type start, size_type end, F func) {
     const size_type num_extra_threads = max_num_worker_threads();
-    const size_type num_workers = 1 + num_extra_threads;
+    //const size_type num_workers = 1 + num_extra_threads;
+    const size_type num_workers = 1;
+    //std::cout << "Number of worker threads: " << num_workers << std::endl;
     size_type work_per_thread = (end - start) / num_workers;
     std::vector<std::thread, rebind_alloc<std::thread>> threads(
         get_allocator());

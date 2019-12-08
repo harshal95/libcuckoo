@@ -12,41 +12,54 @@
 
 void insertIntoTable(cuckoohash_map<int, std::string>& Table, int start, int count) {
     for(int i = start; i < start + count; i++) {
+        //std::cout << "Insert for: " << i << std::endl;
         Table.insert(i, "hello");
+
     }
 }
-void do_reads(cuckoohash_map<int, std::string> &Table) {
+void do_reads(cuckoohash_map<int, std::string> &Table, int n) {
 
-    for(int i = 0; i < 100000; i++) {
+    for(int i = 0; i < n; i++) {
         std::string out;
 
-        if(!Table.find(i, out)) {
-            std::cout << "Error!!" << std::endl;
-        }
+        Table.find(i, out);
     }
-    //std::cout << "Exiting do_reads()" << std::endl;
+    //std::cout << "Exiting do_reads()" << std::endl;`
 }
-void do_reserve(cuckoohash_map<int, std::string> &Table) {
-    Table.reserve(4048576);
+void do_reserve(cuckoohash_map<int, std::string> &Table, long n) {
+    Table.reserve(n);
 }
 int main() {
 
     cuckoohash_map<int, std::string> Table;
     int c = 0;
     std::vector<std::thread> threads;
-    insertIntoTable(std::ref(Table), 0, 262144);
     auto start = std::chrono::high_resolution_clock::now();
-    threads.emplace_back(do_reserve, std::ref(Table));
-    //threads.emplace_back(insertIntoTable, std::ref(Table), 0, 4048576);
-    threads.emplace_back(do_reads, std::ref(Table));
-    for(int i = 0; i < 2; i++) {
-        threads[i].join();
-    }
+    //insertIntoTable(std::ref(Table), 0, 262144);
+    try {
+        do_reserve(Table, 40485770);
+        std::cout << "Initial reserve completed" << std::endl;
+        insertIntoTable(std::ref(Table), 0, 4048880);
+        std::cout << "Insertions completed" << std::endl;
+        auto start = std::chrono::high_resolution_clock::now();
+        threads.emplace_back(do_reserve, std::ref(Table), 404857600);
+        //threads.emplace_back(insertIntoTable, std::ref(Table), 0, 4048576);
+        threads.emplace_back(do_reads, std::ref(Table), 4048880);
+        threads.emplace_back(do_reads, std::ref(Table), 4048880);
+        threads.emplace_back(do_reads, std::ref(Table), 4048880);
+        threads.emplace_back(do_reads, std::ref(Table), 4048880);
 
+        for (int i = 0; i < 5; i++) {
+            threads[i].join();
+        }
+        auto stop = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
+        std::cout << "Duration: " << duration.count() << " millisecs" << std::endl;
+    } catch(std::exception e) {
+        std::cout << e.what() << std::endl;
+    }
     //insertIntoTable(Table, 0, 5048560);
-    auto stop = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
-    std::cout << "Duration: " << duration.count() << " millisecs" << std::endl;
+
 //    std::cout <<"Table's hash power " << Table.hashpower() << std::endl;
 //    std::cout <<"Insertion done" << std::endl;
 //    bool res = Table.reserve(4048576);

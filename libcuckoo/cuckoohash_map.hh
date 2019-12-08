@@ -84,7 +84,7 @@ public:
 
   class locked_table;
 
-  std::deque<std::atomic_uint16_t> counters;
+  std::deque<std::atomic_long> counters;
     enum return_code {
         find_fail = -1,
         retry_fail = 0,
@@ -105,7 +105,7 @@ public:
 
   void init_counters(){
       counters.resize(bucket_count());
-      std::cout << "Bucket count : " << bucket_count()  << "\t" << "Counters size : " << counters.size() << std::endl;
+      //std::cout << "Bucket count : " << bucket_count()  << "\t" << "Counters size : " << counters.size() << std::endl;
   }
 
   void print_counters(){
@@ -532,7 +532,7 @@ public:
    */
   template <typename K, typename F> int find_fn(const K &key, F fn) const {
    int i = 0;
-   int retry_count = 5;
+   int retry_count = 1;
    //std::cout << "Called read" << std::endl;
    while(i++ < retry_count) {
        const hash_value hv = hashed_key(key);
@@ -659,11 +659,11 @@ public:
           const size_type i1 = index_hash(hashpower(), hv.hash);
           const size_type i2 = alt_index(hashpower(), hv.partial, i1);
           if(buckets_[i1].status == migrated && buckets_[i2].status == migrated){
-              //std::cout << "Calling insert of new hash map " << getSucceededCountOnNewMap() <<  std::endl;
+              std::cout << "Calling insert of new hash map " << getSucceededCountOnNewMap() <<  std::endl;
               succeededCountOnNewMap++;
               return new_hashmap->insert(std::forward<K>(key), std::forward<Args>(val)...);
           }else if(buckets_[i1].status == migrated || buckets_[i2].status == migrated){
-              //std::cout <<  "One bucket: " << i1 << " migrated and other: " << i2<< " isn't" << std::endl;
+              std::cout <<  "One bucket: " << i1 << " migrated and other: " << i2<< " isn't" << std::endl;
               failedCountOnNewMap++;
               continue;
               //return false;
@@ -2043,7 +2043,7 @@ private:
     new_hashmap = &new_map;
     new_map.max_num_worker_threads(max_num_worker_threads());
     int total_old_buckets = hashsize(hp);
-    std::cout << "Total bucket count in old hashmap: " << total_old_buckets << std::endl;
+    //std::cout << "Total bucket count in old hashmap: " << total_old_buckets << std::endl;
     //Value set upon experimentation
     int region_size = 1 << 5;
     int cur_b = 0;
@@ -2100,8 +2100,6 @@ private:
 
     auto buck = new_hashmap->buckets_[0];
 
-    std::cout <<"New buck's status " <<  buck.status << std::endl;
-    std::cout << "New hashmap's bucket count is " << new_hashmap-> bucket_count() << std::endl;
     // Finish rehashing any data in new_map.
     new_map.rehash_with_workers();
 
@@ -2112,6 +2110,7 @@ private:
     //Lock the table for a brief period to wait for current operations to complete and prevent new operations.
     auto all_locks_manager = lock_all(TABLE_MODE());
     buckets_.swap(new_map.buckets_);
+    init_counters();
     //Unset the flag
     isMigrating = false;
     return ok;

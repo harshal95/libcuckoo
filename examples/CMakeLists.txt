@@ -28,4 +28,7 @@ target_link_libraries(expand_table libcuckoo)
 add_executable(read_while_migrating read_while_migrating.cc)
 target_link_libraries(read_while_migrating libcuckoo)
 
+add_executable(write_while_migrating write_while_migrating.cc)
+target_link_libraries(write_while_migrating libcuckoo)
+
 set_property(TARGET c_hash PROPERTY C_STANDARD 99)

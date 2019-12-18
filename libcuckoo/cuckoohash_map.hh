@@ -532,7 +532,7 @@ public:
    */
   template <typename K, typename F> int find_fn(const K &key, F fn) const {
    int i = 0;
-   int retry_count = 1;
+   int retry_count = 5;
    //std::cout << "Called read" << std::endl;
    while(i++ < retry_count) {
        const hash_value hv = hashed_key(key);
@@ -2018,6 +2018,9 @@ private:
   // maximum hashpower, and we have an actual limit.
   template <typename TABLE_MODE, typename AUTO_RESIZE>
   cuckoo_status cuckoo_expand_simple(size_type new_hp) {
+      auto start = std::chrono::high_resolution_clock::now();
+      
+      
       std::cout << "Calling expansion" << std::endl;
       //Set the migrating flag to block further migrations
       isMigrating = true;
@@ -2113,6 +2116,9 @@ private:
     init_counters();
     //Unset the flag
     isMigrating = false;
+    auto stop = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::seconds>(stop - start);
+    std::cout << "Migration duration is : " << duration.count() << " seconds" << std::endl;  
     return ok;
   }
 

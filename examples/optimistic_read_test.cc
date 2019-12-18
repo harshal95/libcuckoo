@@ -8,9 +8,9 @@
 #include <chrono>
 #include <random>
 
-const size_t thread_num = 8;
+const size_t thread_num = 6;
 const size_t total_inserts = 10000000;
-const size_t total_reads = 10000000;
+const size_t total_reads = 1000000;
 typedef uint32_t KeyType;
 //typedef cuckoohash_map<KeyType, std::string> Table;
 //void do_inserts(Table &freq_map) {

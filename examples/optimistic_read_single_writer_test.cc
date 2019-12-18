@@ -10,7 +10,7 @@
 #include <random>
 
 const size_t read_thread_num = 8;
-const size_t write_thread_num = 1;
+const size_t write_thread_num = 4;
 const size_t total_inserts = 200000;
 const size_t total_reads = 1000000;
 typedef uint32_t KeyType;

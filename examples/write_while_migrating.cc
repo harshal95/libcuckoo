@@ -1,5 +1,5 @@
 //
-// Created by Harshal on 12/5/19.
+// Created by Harshal on 12/10/19.
 //
 
 
@@ -44,12 +44,9 @@ int main() {
         auto start = std::chrono::high_resolution_clock::now();
         threads.emplace_back(do_reserve, std::ref(Table), 404857600);
         //threads.emplace_back(insertIntoTable, std::ref(Table), 0, 4048576);
-        threads.emplace_back(do_reads, std::ref(Table), 4048880);
-        threads.emplace_back(do_reads, std::ref(Table), 4048880);
-        //threads.emplace_back(do_reads, std::ref(Table), 4048880);
-        //threads.emplace_back(do_reads, std::ref(Table), 4048880);
-        //threads.emplace_back(do_reads, std::ref(Table), 4048880);
-        //threads.emplace_back(do_reads, std::ref(Table), 4048880);
+        //threads.emplace_back(insertIntoTable, std::ref(Table), 0, 4048880);
+        //threads.emplace_back(insertIntoTable, std::ref(Table), 0, 4048880);
+        threads.emplace_back(insertIntoTable, std::ref(Table), 0, 4048880);
         for (int i = 0; i < 2; i++) {
             threads[i].join();
         }
@@ -89,3 +86,5 @@ int main() {
 //    std::cout << "Successful insertions on newMap: " << Table.getSucceededCountOnNewMap() << std::endl;
 
 }
+
+

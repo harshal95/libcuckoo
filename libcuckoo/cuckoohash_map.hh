@@ -711,7 +711,7 @@ public:
   template <typename K> bool find(const K &key, mapped_type &val) const {
     int res = find_fn(key, [&val](const mapped_type &v) mutable { val = v; });
       if(res == 0) {
-          std::cout <<"Read failed for " << key << " because of contention... try again!!" << std::endl;
+          //std::cout <<"Read failed for " << key << " because of contention... try again!!" << std::endl;
       }
     return (res == 1);
   }
@@ -758,7 +758,7 @@ public:
   template <typename K> bool contains(const K &key) const {
     int res = find_fn(key, [](const mapped_type &) {});
     if(res == 0) {
-        std::cout <<"Read failed for" << key << "because of contention... try again!!" << std::endl;
+        //std::cout <<"Read failed for" << key << "because of contention... try again!!" << std::endl;
     }
     return (res == 1);
   }
